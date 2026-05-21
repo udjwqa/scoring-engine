@@ -1,0 +1,9 @@
+goldfish
+ranchu
+generic
+vbox86p
+sdk_gphone
+sdk_gphone64
+emulator64
+emu64a
+vsoc_x86
