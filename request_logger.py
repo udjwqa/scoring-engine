@@ -29,6 +29,7 @@ class RequestLogger:
         country_code: str = "",
         city: str = "",
         headers: Optional[dict] = None,
+        js_metrics: Optional[dict] = None,
     ):
         entry_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -36,7 +37,7 @@ class RequestLogger:
         raw_payload = {
             "headers": headers or {},
             "scoringDetails": [d.model_dump() for d in result.details],
-            "jsMetrics": {},
+            "jsMetrics": js_metrics or {},
             "playIntegrity": {},
         }
 

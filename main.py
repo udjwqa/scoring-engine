@@ -13,7 +13,9 @@ from api.lists_routes import router as lists_router
 from api.gateway import router as gateway_router
 from api.dashboard_routes import router as dashboard_router
 from api.audit_routes import router as audit_router
+from api.collect_routes import router as collect_router
 from database import init_db
+from pathlib import Path
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
 
@@ -48,12 +50,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3333",
-        "http://31.76.251.103",
-        "http://31.76.251.103:3000",
-    ],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -64,4 +61,20 @@ app.include_router(config_router)
 app.include_router(lists_router)
 app.include_router(dashboard_router)
 app.include_router(audit_router)
+app.include_router(collect_router)
 app.include_router(gateway_router)
+
+from fastapi.responses import FileResponse
+
+JS_SCRIPTS_DIR = Path(__file__).parent.parent / "js-scripts"
+
+@app.get("/tracker.js")
+async def serve_tracker():
+    obf = JS_SCRIPTS_DIR / "tracker.min.js"
+    src = JS_SCRIPTS_DIR / "tracker.js"
+    path = obf if obf.exists() else src
+    return FileResponse(
+        path,
+        media_type="application/javascript",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )

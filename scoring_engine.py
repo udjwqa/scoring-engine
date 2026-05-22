@@ -250,4 +250,131 @@ class ScoringEngine:
         )
 
 
+    async def score_js_metrics(self, data: dict, ip: str = "") -> ScoringResult:
+        from external.timezone_utils import compare_timezones
+
+        cfg = config_store.engine
+        details = []
+        total = 0
+        rejection_code = None
+
+        MOTION_THRESHOLD = 0.08
+
+        # 1. WebGL — renderer + vendor через стоп-лист
+        webgl = data.get("webgl", {})
+        renderer = webgl.get("renderer", "")
+        vendor = webgl.get("vendor", "")
+        webgl_combined = f"{vendor} {renderer}".lower()
+        if webgl_combined.strip():
+            gpu_list = lists_manager.get_list("gpu_block")
+            if gpu_list:
+                for gpu in gpu_list.items:
+                    if gpu.lower() in webgl_combined:
+                        pts = AUTOBAN_SCORE
+                        total += pts
+                        rejection_code = rejection_code or "emulator_gpu"
+                        details.append(ScoringDetail(
+                            check="js_webgl_gpu", points=pts,
+                            reason=f"WebGL '{renderer}' (vendor: {vendor}) — эмулятор ({gpu})",
+                        ))
+                        break
+
+        # 2. Акселерометр — static_device (< 0.08 m/s²)
+        accel = data.get("accelerometer", {})
+        avg_deviation = accel.get("averageDeviation", -1)
+        samples = accel.get("samples", 0)
+        if samples > 0 and 0 <= avg_deviation < MOTION_THRESHOLD:
+            pts = cfg.weights.mouseWithoutTouch
+            total += pts
+            rejection_code = rejection_code or "static_device"
+            details.append(ScoringDetail(
+                check="js_static_device", points=pts,
+                reason=f"Акселерометр: deviation={avg_deviation} m/s² < {MOTION_THRESHOLD} "
+                       f"({samples} samples) — статичное устройство/эмулятор",
+            ))
+
+        # 3. Мышь без тача
+        input_data = data.get("input", {})
+        mouse = input_data.get("mouseClicks", 0)
+        touch_events = input_data.get("touchEvents", 0)
+        if mouse > 0 and touch_events == 0:
+            pts = cfg.weights.mouseWithoutTouch
+            total += pts
+            rejection_code = rejection_code or "mouse_without_touch"
+            details.append(ScoringDetail(
+                check="js_mouse_no_touch", points=pts,
+                reason=f"Клики мышью ({mouse}) без тач-событий",
+            ))
+
+        # 4. Батарея фейковая
+        battery = data.get("battery", {})
+        level = battery.get("level")
+        charging_time = battery.get("chargingTime")
+        if level is not None and level == 1.0 and charging_time == 0:
+            pts = 50
+            total += pts
+            rejection_code = rejection_code or "emulator_battery"
+            details.append(ScoringDetail(
+                check="js_fake_battery", points=pts,
+                reason="Батарея: level=100%, chargingTime=0 — паттерн эмулятора",
+            ))
+
+        # 5. Таймзона: JS tz vs IPinfo tz → сравнение offset
+        js_tz = data.get("timezone", "")
+        if js_tz:
+            ip_tz = ""
+            ipinfo_data = await ipinfo_client.lookup(ip)
+            if ipinfo_data:
+                ip_tz = ipinfo_data.timezone
+
+            if ip_tz:
+                tz_diff = compare_timezones(js_tz, ip_tz)
+                tolerance = cfg.timezoneDriftHours
+                if tz_diff > tolerance:
+                    pts = cfg.weights.timezoneMismatch
+                    total += pts
+                    rejection_code = rejection_code or "timezone_mismatch"
+                    details.append(ScoringDetail(
+                        check="js_timezone_mismatch", points=pts,
+                        reason=f"Таймзона JS={js_tz} vs IP={ip_tz}, "
+                               f"разница {tz_diff:.1f}ч > допуск {tolerance}ч",
+                    ))
+            else:
+                known_suspicious = ["Etc/UTC", "UTC", "Etc/GMT"]
+                if js_tz in known_suspicious:
+                    pts = cfg.weights.timezoneMismatch
+                    total += pts
+                    details.append(ScoringDetail(
+                        check="js_timezone_suspicious", points=pts,
+                        reason=f"Подозрительная таймзона: {js_tz}",
+                    ))
+
+        # 6. Touch не поддерживается
+        touch_supported = input_data.get("touchSupported", True)
+        if not touch_supported:
+            pts = 20
+            total += pts
+            details.append(ScoringDetail(
+                check="js_no_touch_support", points=pts,
+                reason="Устройство не поддерживает тач (десктоп/эмулятор)",
+            ))
+
+        threshold = cfg.scoreThreshold
+        verdict = "white" if total >= threshold else "grey"
+        if verdict == "grey":
+            rejection_code = None
+
+        logger.info(
+            f"[{ip}] JS score={total} threshold={threshold} verdict={verdict} "
+            f"checks={len(details)}"
+        )
+
+        return ScoringResult(
+            score=total,
+            verdict=verdict,
+            rejectionCode=rejection_code,
+            details=details,
+        )
+
+
 scoring_engine = ScoringEngine()
