@@ -154,6 +154,21 @@ class ScoringEngine:
                     reason=f"IPinfo: Hosting IP ({ipinfo_data.org})",
                 ))
 
+        # Cross-check: язык браузера vs страна IP
+        if accept_language and ipinfo_data and ipinfo_data.country:
+            primary_lang = accept_language.split(",")[0].strip().lower()
+            ip_country = ipinfo_data.country.upper()
+            ENGLISH_COUNTRIES = {"US", "GB", "AU", "CA", "NZ", "IE"}
+            lang_code = primary_lang[:2]
+
+            if lang_code == "en" and ip_country not in ENGLISH_COUNTRIES:
+                pts = cfg.weights.englishWebView
+                total += pts
+                details.append(ScoringDetail(
+                    check="lang_country_mismatch", points=pts,
+                    reason=f"Язык '{primary_lang}' не совпадает со страной IP '{ip_country}'",
+                ))
+
         ipqs_data = await ipqs_client.lookup(ip)
         if ipqs_data and ipqs_data.success:
             if ipqs_data.fraud_score > 75:
