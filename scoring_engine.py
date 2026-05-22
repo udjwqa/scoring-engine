@@ -57,15 +57,8 @@ class ScoringEngine:
                         ))
                         break
 
-        if accept_language:
-            primary_lang = accept_language.split(",")[0].strip().lower()
-            if primary_lang.startswith("en"):
-                pts = cfg.weights.englishWebView
-                total += pts
-                details.append(ScoringDetail(
-                    check="english_language", points=pts,
-                    reason=f"Первичный язык: {primary_lang}",
-                ))
+        # Язык НЕ проверяем на gateway — это мягкий поведенческий признак
+        # Проверяется в score_js_metrics (этап 3 — датчики)
 
         if device_model:
             dm_list = lists_manager.get_list("device_models_block")
@@ -154,20 +147,8 @@ class ScoringEngine:
                     reason=f"IPinfo: Hosting IP ({ipinfo_data.org})",
                 ))
 
-        # Cross-check: язык браузера vs страна IP
-        if accept_language and ipinfo_data and ipinfo_data.country:
-            primary_lang = accept_language.split(",")[0].strip().lower()
-            ip_country = ipinfo_data.country.upper()
-            ENGLISH_COUNTRIES = {"US", "GB", "AU", "CA", "NZ", "IE"}
-            lang_code = primary_lang[:2]
-
-            if lang_code == "en" and ip_country not in ENGLISH_COUNTRIES:
-                pts = cfg.weights.englishWebView
-                total += pts
-                details.append(ScoringDetail(
-                    check="lang_country_mismatch", points=pts,
-                    reason=f"Язык '{primary_lang}' не совпадает со страной IP '{ip_country}'",
-                ))
+        # Язык vs страна — НЕ проверяем на gateway (мягкий признак)
+        # Проверяется в score_js_metrics (этап 3 — датчики)
 
         ipqs_data = await ipqs_client.lookup(ip)
         if ipqs_data and ipqs_data.success:
@@ -446,6 +427,20 @@ class ScoringEngine:
                 check="js_no_touch_support", points=20,
                 reason="Устройство не поддерживает тач (десктоп/эмулятор)",
             ))
+
+        # Английский язык из неанглоязычной страны
+        js_lang = data.get("language", "")
+        if js_lang and ipinfo_data and ipinfo_data.country:
+            lang_code = js_lang[:2].lower()
+            ip_country = ipinfo_data.country.upper()
+            ENGLISH_COUNTRIES = {"US", "GB", "AU", "CA", "NZ", "IE"}
+            if lang_code == "en" and ip_country not in ENGLISH_COUNTRIES:
+                pts = cfg.weights.englishWebView
+                soft_score += pts
+                details.append(ScoringDetail(
+                    check="js_lang_mismatch", points=pts,
+                    reason=f"Язык '{js_lang}' не совпадает со страной IP '{ip_country}'",
+                ))
 
         # =============================================
         # ВЕРДИКТ
