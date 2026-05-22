@@ -15,7 +15,9 @@ FAKE_HTML = """<!DOCTYPE html>
 @router.get("/")
 async def gateway(request: Request):
     headers = dict(request.headers)
-    ip = request.client.host if request.client else "0.0.0.0"
+    forwarded = headers.get("x-forwarded-for", "")
+    real_ip = headers.get("x-real-ip", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (real_ip or (request.client.host if request.client else "0.0.0.0"))
 
     user_agent = headers.get("user-agent", "")
     accept_language = headers.get("accept-language", "")
@@ -77,7 +79,9 @@ async def gateway(request: Request):
 async def score_debug(request: Request):
     """Debug endpoint — показывает результат скоринга без редиректа."""
     headers = dict(request.headers)
-    ip = request.client.host if request.client else "0.0.0.0"
+    forwarded = headers.get("x-forwarded-for", "")
+    real_ip = headers.get("x-real-ip", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (real_ip or (request.client.host if request.client else "0.0.0.0"))
 
     result = await scoring_engine.score_request(
         user_agent=headers.get("user-agent", ""),
