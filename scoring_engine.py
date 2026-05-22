@@ -319,13 +319,81 @@ class ScoringEngine:
                 reason="Батарея: level=100%, chargingTime=0 — паттерн эмулятора",
             ))
 
-        # 5. Таймзона: JS tz vs IPinfo tz → сравнение offset
+        # 5. IPinfo: гео-проверки (country/city/ISP) + таймзона
         js_tz = data.get("timezone", "")
+        ipinfo_data = await ipinfo_client.lookup(ip)
+
+        if ipinfo_data:
+            # Country block
+            if ipinfo_data.country:
+                if lists_manager.lookup("countries_block", ipinfo_data.country.upper()):
+                    pts = AUTOBAN_SCORE
+                    total += pts
+                    rejection_code = rejection_code or "country_blocked"
+                    details.append(ScoringDetail(
+                        check="js_country_block", points=pts,
+                        reason=f"Страна '{ipinfo_data.country}' в чёрном списке (IPinfo)",
+                    ))
+
+            # City block
+            if ipinfo_data.city:
+                cities_list = lists_manager.get_list("cities_block")
+                if cities_list:
+                    for c in cities_list.items:
+                        if c.lower() == ipinfo_data.city.lower():
+                            pts = cfg.weights.suspiciousCity
+                            total += pts
+                            details.append(ScoringDetail(
+                                check="js_city_block", points=pts,
+                                reason=f"Город '{ipinfo_data.city}' — город модерации (IPinfo)",
+                            ))
+                            break
+
+            # ISP block
+            if ipinfo_data.isp:
+                isp_list = lists_manager.get_list("isp_block")
+                if isp_list:
+                    isp_lower = ipinfo_data.isp.lower()
+                    for provider in isp_list.items:
+                        if provider.lower() in isp_lower:
+                            pts = cfg.weights.suspiciousHosting
+                            total += pts
+                            rejection_code = rejection_code or "suspicious_hosting"
+                            details.append(ScoringDetail(
+                                check="js_isp_block", points=pts,
+                                reason=f"ISP '{ipinfo_data.isp}' — подозрительный (IPinfo)",
+                            ))
+                            break
+
+            # VPN/Proxy/Hosting
+            if ipinfo_data.vpn:
+                pts = cfg.weights.vpnProxyTor
+                total += pts
+                rejection_code = rejection_code or "vpn_detected"
+                details.append(ScoringDetail(
+                    check="js_ipinfo_vpn", points=pts,
+                    reason=f"IPinfo: VPN обнаружен ({ip})",
+                ))
+            if ipinfo_data.proxy:
+                pts = cfg.weights.vpnProxyTor
+                total += pts
+                rejection_code = rejection_code or "proxy_detected"
+                details.append(ScoringDetail(
+                    check="js_ipinfo_proxy", points=pts,
+                    reason=f"IPinfo: Proxy обнаружен ({ip})",
+                ))
+            if ipinfo_data.hosting:
+                pts = cfg.weights.suspiciousHosting
+                total += pts
+                rejection_code = rejection_code or "suspicious_hosting"
+                details.append(ScoringDetail(
+                    check="js_ipinfo_hosting", points=pts,
+                    reason=f"IPinfo: Hosting IP ({ipinfo_data.org})",
+                ))
+
+        # Timezone comparison
         if js_tz:
-            ip_tz = ""
-            ipinfo_data = await ipinfo_client.lookup(ip)
-            if ipinfo_data:
-                ip_tz = ipinfo_data.timezone
+            ip_tz = ipinfo_data.timezone if ipinfo_data else ""
 
             if ip_tz:
                 tz_diff = compare_timezones(js_tz, ip_tz)
