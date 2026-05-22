@@ -270,12 +270,20 @@ class ScoringEngine:
 
         cfg = config_store.engine
         details = []
-        total = 0
+        hard_score = 0
+        soft_score = 0
         rejection_code = None
+        has_hard_ban = False
 
         MOTION_THRESHOLD = 0.08
+        JS_SENSOR_THRESHOLD = 50
 
-        # 1. WebGL — renderer + vendor через стоп-лист
+        # =============================================
+        # ЖЁСТКИЕ ПРОВЕРКИ (один признак = мгновенный бан)
+        # GPU эмулятора, страна, ISP, VPN/proxy
+        # =============================================
+
+        # GPU эмулятора в стоп-листе → instant ban
         webgl = data.get("webgl", {})
         renderer = webgl.get("renderer", "")
         vendor = webgl.get("vendor", "")
@@ -285,138 +293,136 @@ class ScoringEngine:
             if gpu_list:
                 for gpu in gpu_list.items:
                     if gpu.lower() in webgl_combined:
-                        pts = AUTOBAN_SCORE
-                        total += pts
+                        hard_score += AUTOBAN_SCORE
+                        has_hard_ban = True
                         rejection_code = rejection_code or "emulator_gpu"
                         details.append(ScoringDetail(
-                            check="js_webgl_gpu", points=pts,
+                            check="js_webgl_gpu", points=AUTOBAN_SCORE,
                             reason=f"WebGL '{renderer}' (vendor: {vendor}) — эмулятор ({gpu})",
                         ))
                         break
 
-        # 2. Акселерометр — static_device (< 0.08 m/s²)
-        accel = data.get("accelerometer", {})
-        avg_deviation = accel.get("averageDeviation", -1)
-        samples = accel.get("samples", 0)
-        if samples > 0 and 0 <= avg_deviation < MOTION_THRESHOLD:
-            pts = cfg.weights.mouseWithoutTouch
-            total += pts
-            rejection_code = rejection_code or "static_device"
-            details.append(ScoringDetail(
-                check="js_static_device", points=pts,
-                reason=f"Акселерометр: deviation={avg_deviation} m/s² < {MOTION_THRESHOLD} "
-                       f"({samples} samples) — статичное устройство/эмулятор",
-            ))
-
-        # 3. Мышь без тача
-        input_data = data.get("input", {})
-        mouse = input_data.get("mouseClicks", 0)
-        touch_events = input_data.get("touchEvents", 0)
-        if mouse > 0 and touch_events == 0:
-            pts = cfg.weights.mouseWithoutTouch
-            total += pts
-            rejection_code = rejection_code or "mouse_without_touch"
-            details.append(ScoringDetail(
-                check="js_mouse_no_touch", points=pts,
-                reason=f"Клики мышью ({mouse}) без тач-событий",
-            ))
-
-        # 4. Батарея фейковая
-        battery = data.get("battery", {})
-        level = battery.get("level")
-        charging_time = battery.get("chargingTime")
-        if level is not None and level == 1.0 and charging_time == 0:
-            pts = 50
-            total += pts
-            rejection_code = rejection_code or "emulator_battery"
-            details.append(ScoringDetail(
-                check="js_fake_battery", points=pts,
-                reason="Батарея: level=100%, chargingTime=0 — паттерн эмулятора",
-            ))
-
-        # 5. IPinfo: гео-проверки (country/city/ISP) + таймзона
-        js_tz = data.get("timezone", "")
+        # IPinfo гео-проверки → instant ban
         ipinfo_data = await ipinfo_client.lookup(ip)
 
         if ipinfo_data:
-            # Country block
             if ipinfo_data.country:
                 if lists_manager.lookup("countries_block", ipinfo_data.country.upper()):
-                    pts = AUTOBAN_SCORE
-                    total += pts
+                    hard_score += AUTOBAN_SCORE
+                    has_hard_ban = True
                     rejection_code = rejection_code or "country_blocked"
                     details.append(ScoringDetail(
-                        check="js_country_block", points=pts,
+                        check="js_country_block", points=AUTOBAN_SCORE,
                         reason=f"Страна '{ipinfo_data.country}' в чёрном списке (IPinfo)",
                     ))
 
-            # City block
             if ipinfo_data.city:
                 cities_list = lists_manager.get_list("cities_block")
                 if cities_list:
                     for c in cities_list.items:
                         if c.lower() == ipinfo_data.city.lower():
-                            pts = cfg.weights.suspiciousCity
-                            total += pts
+                            hard_score += AUTOBAN_SCORE
+                            has_hard_ban = True
+                            rejection_code = rejection_code or "city_blocked"
                             details.append(ScoringDetail(
-                                check="js_city_block", points=pts,
+                                check="js_city_block", points=AUTOBAN_SCORE,
                                 reason=f"Город '{ipinfo_data.city}' — город модерации (IPinfo)",
                             ))
                             break
 
-            # ISP block
             if ipinfo_data.isp:
                 isp_list = lists_manager.get_list("isp_block")
                 if isp_list:
                     isp_lower = ipinfo_data.isp.lower()
                     for provider in isp_list.items:
                         if provider.lower() in isp_lower:
-                            pts = cfg.weights.suspiciousHosting
-                            total += pts
+                            hard_score += AUTOBAN_SCORE
+                            has_hard_ban = True
                             rejection_code = rejection_code or "suspicious_hosting"
                             details.append(ScoringDetail(
-                                check="js_isp_block", points=pts,
+                                check="js_isp_block", points=AUTOBAN_SCORE,
                                 reason=f"ISP '{ipinfo_data.isp}' — подозрительный (IPinfo)",
                             ))
                             break
 
-            # VPN/Proxy/Hosting
             if ipinfo_data.vpn:
-                pts = cfg.weights.vpnProxyTor
-                total += pts
+                hard_score += AUTOBAN_SCORE
+                has_hard_ban = True
                 rejection_code = rejection_code or "vpn_detected"
                 details.append(ScoringDetail(
-                    check="js_ipinfo_vpn", points=pts,
+                    check="js_ipinfo_vpn", points=AUTOBAN_SCORE,
                     reason=f"IPinfo: VPN обнаружен ({ip})",
                 ))
             if ipinfo_data.proxy:
-                pts = cfg.weights.vpnProxyTor
-                total += pts
+                hard_score += AUTOBAN_SCORE
+                has_hard_ban = True
                 rejection_code = rejection_code or "proxy_detected"
                 details.append(ScoringDetail(
-                    check="js_ipinfo_proxy", points=pts,
+                    check="js_ipinfo_proxy", points=AUTOBAN_SCORE,
                     reason=f"IPinfo: Proxy обнаружен ({ip})",
                 ))
             if ipinfo_data.hosting:
-                pts = cfg.weights.suspiciousHosting
-                total += pts
+                hard_score += AUTOBAN_SCORE
+                has_hard_ban = True
                 rejection_code = rejection_code or "suspicious_hosting"
                 details.append(ScoringDetail(
-                    check="js_ipinfo_hosting", points=pts,
+                    check="js_ipinfo_hosting", points=AUTOBAN_SCORE,
                     reason=f"IPinfo: Hosting IP ({ipinfo_data.org})",
                 ))
 
-        # Timezone comparison
+        # =============================================
+        # МЯГКИЕ ПРОВЕРКИ — ДАТЧИКИ (накопление баллов)
+        # Банят только если совокупность >= JS_SENSOR_THRESHOLD
+        # Это решающий финальный этап
+        # =============================================
+
+        input_data = data.get("input", {})
+
+        # Акселерометр
+        accel = data.get("accelerometer", {})
+        avg_deviation = accel.get("averageDeviation", -1)
+        samples = accel.get("samples", 0)
+        if samples > 0 and 0 <= avg_deviation < MOTION_THRESHOLD:
+            pts = cfg.weights.mouseWithoutTouch
+            soft_score += pts
+            details.append(ScoringDetail(
+                check="js_static_device", points=pts,
+                reason=f"Акселерометр: deviation={avg_deviation} m/s² < {MOTION_THRESHOLD} "
+                       f"({samples} samples) — статичное устройство",
+            ))
+
+        # Мышь без тача
+        mouse = input_data.get("mouseClicks", 0)
+        touch_events = input_data.get("touchEvents", 0)
+        if mouse > 0 and touch_events == 0:
+            pts = cfg.weights.mouseWithoutTouch
+            soft_score += pts
+            details.append(ScoringDetail(
+                check="js_mouse_no_touch", points=pts,
+                reason=f"Клики мышью ({mouse}) без тач-событий",
+            ))
+
+        # Фейковая батарея
+        battery = data.get("battery", {})
+        level = battery.get("level")
+        charging_time = battery.get("chargingTime")
+        if level is not None and level == 1.0 and charging_time == 0:
+            soft_score += 50
+            details.append(ScoringDetail(
+                check="js_fake_battery", points=50,
+                reason="Батарея: level=100%, chargingTime=0 — паттерн эмулятора",
+            ))
+
+        # Таймзона
+        js_tz = data.get("timezone", "")
         if js_tz:
             ip_tz = ipinfo_data.timezone if ipinfo_data else ""
-
             if ip_tz:
                 tz_diff = compare_timezones(js_tz, ip_tz)
                 tolerance = cfg.timezoneDriftHours
                 if tz_diff > tolerance:
                     pts = cfg.weights.timezoneMismatch
-                    total += pts
-                    rejection_code = rejection_code or "timezone_mismatch"
+                    soft_score += pts
                     details.append(ScoringDetail(
                         check="js_timezone_mismatch", points=pts,
                         reason=f"Таймзона JS={js_tz} vs IP={ip_tz}, "
@@ -426,30 +432,40 @@ class ScoringEngine:
                 known_suspicious = ["Etc/UTC", "UTC", "Etc/GMT"]
                 if js_tz in known_suspicious:
                     pts = cfg.weights.timezoneMismatch
-                    total += pts
+                    soft_score += pts
                     details.append(ScoringDetail(
                         check="js_timezone_suspicious", points=pts,
                         reason=f"Подозрительная таймзона: {js_tz}",
                     ))
 
-        # 6. Touch не поддерживается
+        # Touch не поддерживается
         touch_supported = input_data.get("touchSupported", True)
         if not touch_supported:
-            pts = 20
-            total += pts
+            soft_score += 20
             details.append(ScoringDetail(
-                check="js_no_touch_support", points=pts,
+                check="js_no_touch_support", points=20,
                 reason="Устройство не поддерживает тач (десктоп/эмулятор)",
             ))
 
-        threshold = cfg.scoreThreshold
-        verdict = "white" if total >= threshold else "grey"
-        if verdict == "grey":
+        # =============================================
+        # ВЕРДИКТ
+        # Жёсткие → мгновенный бан
+        # Мягкие → бан только если совокупность >= 50
+        # =============================================
+        total = hard_score + soft_score
+
+        if has_hard_ban:
+            verdict = "white"
+        elif soft_score >= JS_SENSOR_THRESHOLD:
+            verdict = "white"
+            rejection_code = rejection_code or "behavioral_score"
+        else:
+            verdict = "grey"
             rejection_code = None
 
         logger.info(
-            f"[{ip}] JS score={total} threshold={threshold} verdict={verdict} "
-            f"checks={len(details)}"
+            f"[{ip}] JS hard={hard_score} soft={soft_score} total={total} "
+            f"verdict={verdict} checks={len(details)}"
         )
 
         return ScoringResult(
