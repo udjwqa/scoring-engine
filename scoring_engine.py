@@ -5,6 +5,7 @@ from config import config_store
 from lists_manager import lists_manager
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
+from ip_ranges import ip_range_checker
 
 logger = logging.getLogger("scoring")
 
@@ -98,6 +99,16 @@ class ScoringEngine:
                             reason=f"GPU '{gpu_renderer}' — эмулятор ({gpu})",
                         ))
                         break
+
+        # IP в CIDR-диапазонах ботов/датацентров
+        if ip and ip_range_checker.is_blocked(ip):
+            pts = AUTOBAN_SCORE
+            total += pts
+            rejection_code = rejection_code or "ip_range_blocked"
+            details.append(ScoringDetail(
+                check="ip_range_block", points=pts,
+                reason=f"IP '{ip}' в диапазоне ботов/датацентров",
+            ))
 
         # === БЛОК 2: Внешние API (IPinfo + IPQS) ===
 
@@ -264,6 +275,16 @@ class ScoringEngine:
         # GPU эмулятора, страна, ISP, VPN/proxy
         # =============================================
 
+        # IP в CIDR-диапазонах ботов/датацентров → instant ban
+        if ip and ip_range_checker.is_blocked(ip):
+            hard_score += AUTOBAN_SCORE
+            has_hard_ban = True
+            rejection_code = rejection_code or "ip_range_blocked"
+            details.append(ScoringDetail(
+                check="js_ip_range_block", points=AUTOBAN_SCORE,
+                reason=f"IP '{ip}' в диапазоне ботов/датацентров",
+            ))
+
         # GPU эмулятора в стоп-листе → instant ban
         webgl = data.get("webgl", {})
         renderer = webgl.get("renderer", "")
@@ -428,18 +449,66 @@ class ScoringEngine:
                 reason="Устройство не поддерживает тач (десктоп/эмулятор)",
             ))
 
-        # Английский язык из неанглоязычной страны
+        # === ЯЗЫКОВАЯ ЭВРИСТИКА (модераторский паттерн) ===
         js_lang = data.get("language", "")
-        if js_lang and ipinfo_data and ipinfo_data.country:
+        js_languages = data.get("languages", [])
+        ip_country = ipinfo_data.country.upper() if ipinfo_data and ipinfo_data.country else ""
+
+        ENGLISH_COUNTRIES = {"US", "GB", "AU", "CA", "NZ", "IE"}
+        LANG_COUNTRY_MAP = {
+            "ru": {"RU", "BY", "KZ", "KG", "UA", "UZ", "TJ", "MD"},
+            "tr": {"TR", "CY"},
+            "uk": {"UA"},
+            "kk": {"KZ"},
+            "uz": {"UZ"},
+            "de": {"DE", "AT", "CH"},
+            "fr": {"FR", "BE", "CH", "CA"},
+            "es": {"ES", "MX", "AR", "CO", "CL", "PE", "VE"},
+            "pt": {"BR", "PT"},
+            "ar": {"SA", "AE", "EG", "IQ", "JO", "KW", "QA", "BH", "OM", "LB"},
+            "hi": {"IN"},
+            "vi": {"VN"},
+            "th": {"TH"},
+            "id": {"ID"},
+            "ja": {"JP"},
+            "ko": {"KR"},
+            "zh": {"CN", "TW", "HK", "SG"},
+        }
+
+        # 1. Язык устройства не совпадает со страной IP
+        if js_lang and ip_country:
             lang_code = js_lang[:2].lower()
-            ip_country = ipinfo_data.country.upper()
-            ENGLISH_COUNTRIES = {"US", "GB", "AU", "CA", "NZ", "IE"}
-            if lang_code == "en" and ip_country not in ENGLISH_COUNTRIES:
+            expected_countries = LANG_COUNTRY_MAP.get(lang_code, set())
+            if lang_code == "en":
+                expected_countries = ENGLISH_COUNTRIES
+
+            if expected_countries and ip_country not in expected_countries:
                 pts = cfg.weights.englishWebView
                 soft_score += pts
                 details.append(ScoringDetail(
-                    check="js_lang_mismatch", points=pts,
-                    reason=f"Язык '{js_lang}' не совпадает со страной IP '{ip_country}'",
+                    check="js_lang_country_mismatch", points=pts,
+                    reason=f"Язык '{js_lang}' не типичен для страны IP '{ip_country}'",
+                ))
+
+        # 2. Множество языков на устройстве (3+) — паттерн модератора
+        if len(js_languages) >= 3:
+            pts = 15
+            soft_score += pts
+            details.append(ScoringDetail(
+                check="js_multi_language", points=pts,
+                reason=f"Множество языков на устройстве ({len(js_languages)}): {', '.join(js_languages[:5])}",
+            ))
+
+        # 3. Язык устройства — экзотический для целевого трафика
+        if js_lang and ip_country:
+            exotic_langs = {"ar", "vi", "th", "hi", "bn", "ta", "te", "ml", "ko", "ja", "zh"}
+            lang_code = js_lang[:2].lower()
+            if lang_code in exotic_langs and ip_country in {"US", "GB", "DE", "FR"}:
+                pts = 20
+                soft_score += pts
+                details.append(ScoringDetail(
+                    check="js_exotic_lang_from_moderator_country", points=pts,
+                    reason=f"Экзотический язык '{js_lang}' из страны модерации '{ip_country}'",
                 ))
 
         # =============================================

@@ -15,6 +15,7 @@ from api.dashboard_routes import router as dashboard_router
 from api.audit_routes import router as audit_router
 from api.collect_routes import router as collect_router
 from database import init_db
+from ip_ranges import ip_range_checker
 from pathlib import Path
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     await lists_manager.load_all()
     await lists_manager.start_watcher(interval=5)
+    ip_range_checker.load()
     logger.info("Server ready")
     yield
     lists_manager.stop_watcher()
