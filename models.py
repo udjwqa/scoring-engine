@@ -14,7 +14,7 @@ class ScoringWeights(BaseModel):
 
 
 class EngineConfig(BaseModel):
-    scoreThreshold: int = 70
+    scoreThreshold: int = 1
     ipqsFailOpen: bool = False
     minPlayIntegrity: Literal[
         "MEETS_BASIC_INTEGRITY",
