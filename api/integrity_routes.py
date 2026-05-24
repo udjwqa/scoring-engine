@@ -76,7 +76,7 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
                     "error": "Invalid or expired nonce (possible replay attack)",
                     "score": AUTOBAN_SCORE,
                     "verdict": "white",
-                    "rejectionCode": "nonce_invalid",
+                    "rejectionCode": "integrity_invalid",
                 }, status_code=403)
 
             await r.delete(f"nonce:{body.nonce}")
@@ -116,7 +116,7 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
             "error": "Nonce mismatch (token tampered)",
             "score": AUTOBAN_SCORE,
             "verdict": "white",
-            "rejectionCode": "nonce_mismatch",
+            "rejectionCode": "integrity_invalid",
         }, status_code=403)
 
     # === SCORING ===
@@ -127,9 +127,28 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
 
     min_integrity = cfg.minPlayIntegrity
 
-    if min_integrity == "MEETS_STRONG_INTEGRITY" and not verdict.meets_strong:
+    # Пустой deviceRecognitionVerdict → полный отказ (девайс не прошёл никакую проверку)
+    if verdict.is_empty_device:
         total += AUTOBAN_SCORE
-        rejection_code = "integrity_fail"
+        rejection_code = "device_compromised"
+        details.append(ScoringDetail(
+            check="play_integrity_empty",
+            points=AUTOBAN_SCORE,
+            reason="Device integrity: пустой вердикт — устройство не прошло проверку",
+        ))
+    # MEETS_VIRTUAL_INTEGRITY only → эмулятор или root
+    elif verdict.is_virtual_only:
+        total += AUTOBAN_SCORE
+        rejection_code = "device_compromised"
+        details.append(ScoringDetail(
+            check="play_integrity_virtual",
+            points=AUTOBAN_SCORE,
+            reason=f"Device integrity: {verdict.device_recognition} — эмулятор/root (только VIRTUAL)",
+        ))
+    # Проверка минимального вердикта из конфига
+    elif min_integrity == "MEETS_STRONG_INTEGRITY" and not verdict.meets_strong:
+        total += AUTOBAN_SCORE
+        rejection_code = "device_compromised"
         details.append(ScoringDetail(
             check="play_integrity_strong",
             points=AUTOBAN_SCORE,
@@ -137,7 +156,7 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
         ))
     elif min_integrity == "MEETS_DEVICE_INTEGRITY" and not verdict.meets_device:
         total += AUTOBAN_SCORE
-        rejection_code = "integrity_fail"
+        rejection_code = "device_compromised"
         details.append(ScoringDetail(
             check="play_integrity_device",
             points=AUTOBAN_SCORE,
@@ -145,20 +164,21 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
         ))
     elif min_integrity == "MEETS_BASIC_INTEGRITY" and not verdict.meets_basic:
         total += AUTOBAN_SCORE
-        rejection_code = "integrity_fail"
+        rejection_code = "device_compromised"
         details.append(ScoringDetail(
             check="play_integrity_basic",
             points=AUTOBAN_SCORE,
             reason=f"Device integrity: {verdict.device_recognition} — не BASIC",
         ))
 
+    # App tampered — не PLAY_RECOGNIZED (модифицирован, репак, сторонний код)
     if not verdict.is_recognized_app:
-        total += 50
-        rejection_code = rejection_code or "integrity_app_unrecognized"
+        total += AUTOBAN_SCORE
+        rejection_code = rejection_code or "app_tampered"
         details.append(ScoringDetail(
             check="play_integrity_app",
-            points=50,
-            reason=f"App recognition: {verdict.app_recognition}",
+            points=AUTOBAN_SCORE,
+            reason=f"App recognition: {verdict.app_recognition} — приложение модифицировано",
         ))
 
     if not verdict.is_licensed:

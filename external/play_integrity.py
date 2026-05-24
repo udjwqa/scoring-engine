@@ -45,6 +45,18 @@ class IntegrityVerdict:
         return "MEETS_STRONG_INTEGRITY" in self.device_recognition
 
     @property
+    def is_virtual_only(self):
+        return (
+            "MEETS_VIRTUAL_INTEGRITY" in self.device_recognition
+            and "MEETS_DEVICE_INTEGRITY" not in self.device_recognition
+            and "MEETS_STRONG_INTEGRITY" not in self.device_recognition
+        )
+
+    @property
+    def is_empty_device(self):
+        return len(self.device_recognition) == 0
+
+    @property
     def is_recognized_app(self):
         return self.app_recognition == "PLAY_RECOGNIZED"
 
