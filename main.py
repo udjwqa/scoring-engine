@@ -74,7 +74,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         skip_paths = ("/api/health", "/api/bans", "/api/config", "/api/lists",
                       "/api/offers", "/api/cf/", "/api/dashboard", "/api/audit",
-                      "/api/form", "/api/collect")
+                      "/api/form", "/api/collect", "/api/integrity")
         if any(request.url.path.startswith(p) for p in skip_paths):
             return await call_next(request)
 
