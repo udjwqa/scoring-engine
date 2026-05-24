@@ -42,3 +42,24 @@ class RequestLog(Base):
             "rejectionCode": self.rejection_code,
             "rawPayload": self.raw_payload or {},
         }
+
+
+class BannedIP(Base):
+    __tablename__ = "banned_ips"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ip = Column(String(45), unique=True, index=True)
+    reason = Column(String(200))
+    source = Column(String(50))
+    banned_at = Column(DateTime, default=datetime.utcnow)
+    cf_rule_id = Column(String(100), nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "ip": self.ip or "",
+            "reason": self.reason or "",
+            "source": self.source or "",
+            "bannedAt": self.banned_at.isoformat() + "Z" if self.banned_at else "",
+            "cfRuleId": self.cf_rule_id,
+        }

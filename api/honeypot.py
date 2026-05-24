@@ -216,3 +216,15 @@ async def form_honeyfield(request: Request):
         "<h1>Thank you!</h1><p>Your submission has been received.</p>",
         status_code=200,
     )
+
+
+@router.get("/api/bans/honeypot")
+async def get_honeypot_bans():
+    bans = await honeypot_ban.get_all_banned()
+    return bans
+
+
+@router.delete("/api/bans/honeypot/{ip}")
+async def unban_honeypot(ip: str):
+    await honeypot_ban.unban(ip)
+    return {"success": True, "ip": ip, "unbanned": True}
