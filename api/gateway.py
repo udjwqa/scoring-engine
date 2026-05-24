@@ -7,9 +7,19 @@ from config import config_store
 router = APIRouter()
 
 FAKE_HTML = """<!DOCTYPE html>
-<html><head><title>App</title></head>
-<body><h1>Welcome</h1><p>Content not available.</p></body>
-</html>"""
+<html><head><title>App</title><meta name="robots" content="noindex">
+<style>.hp-f{position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;overflow:hidden;}</style>
+</head><body>
+<h1>Welcome</h1><p>This content is currently unavailable in your region.</p>
+<form method="POST" action="/api/form">
+<input type="text" name="security_confirm" class="hp-f" tabindex="-1" autocomplete="off">
+<input type="text" name="email_verify" class="hp-f" tabindex="-1" autocomplete="off">
+<input type="hidden" name="__hp_ts" value="">
+<div style="margin-top:20px"><label>Email: <input type="email" name="email" placeholder="your@email.com"></label></div>
+<div style="margin-top:10px"><button type="submit">Subscribe</button></div>
+</form>
+<script>document.querySelector('[name=__hp_ts]').value=Date.now();</script>
+</body></html>"""
 
 
 @router.get("/")

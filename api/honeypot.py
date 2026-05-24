@@ -146,3 +146,73 @@ async def config_trap(request: Request):
 async def generic_trap(request: Request):
     await trap(request, request.url.path)
     return JSONResponse({"error": "Not Found"}, status_code=404)
+
+
+@router.post("/api/form")
+async def form_honeyfield(request: Request):
+    ip = get_ip(request)
+
+    try:
+        body = await request.body()
+        from urllib.parse import parse_qs
+        data = parse_qs(body.decode("utf-8", errors="ignore"))
+    except Exception:
+        data = {}
+
+    security_confirm = data.get("security_confirm", [""])[0]
+    email_verify = data.get("email_verify", [""])[0]
+    hp_ts = data.get("__hp_ts", [""])[0]
+
+    is_bot = False
+    reasons = []
+
+    if security_confirm:
+        is_bot = True
+        reasons.append(f"honeyfield 'security_confirm' filled: '{security_confirm[:30]}'")
+
+    if email_verify:
+        is_bot = True
+        reasons.append(f"honeyfield 'email_verify' filled: '{email_verify[:30]}'")
+
+    if not hp_ts:
+        is_bot = True
+        reasons.append("timestamp field empty (no JS execution)")
+
+    if hp_ts:
+        try:
+            ts = int(hp_ts)
+            import time
+            now = int(time.time() * 1000)
+            if now - ts < 500:
+                is_bot = True
+                reasons.append(f"form submitted in {now - ts}ms (too fast for human)")
+        except ValueError:
+            is_bot = True
+            reasons.append("invalid timestamp value")
+
+    if is_bot:
+        reason_str = "; ".join(reasons)
+        await honeypot_ban.ban(ip, f"honeyfield:{reason_str[:100]}")
+
+        result = ScoringResult(
+            score=100,
+            verdict="white",
+            rejectionCode="honeyfield_bot",
+            details=[ScoringDetail(
+                check="honeyfield",
+                points=100,
+                reason=f"Honeyfield: {reason_str}",
+            )],
+        )
+        await request_logger.log(
+            ip=ip,
+            result=result,
+            user_agent=request.headers.get("user-agent", ""),
+            headers={"source": "honeyfield", "reasons": reason_str},
+        )
+        logger.warning(f"HONEYFIELD BOT: {ip} — {reason_str}")
+
+    return HTMLResponse(
+        "<h1>Thank you!</h1><p>Your submission has been received.</p>",
+        status_code=200,
+    )
