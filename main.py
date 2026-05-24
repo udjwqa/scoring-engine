@@ -70,7 +70,9 @@ app.add_middleware(
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/api/health"):
+        skip_paths = ("/api/health", "/api/bans", "/api/config", "/api/lists",
+                      "/api/offers", "/api/cf/", "/api/dashboard", "/api/audit")
+        if any(request.url.path.startswith(p) for p in skip_paths):
             return await call_next(request)
 
         forwarded = request.headers.get("x-forwarded-for", "")
