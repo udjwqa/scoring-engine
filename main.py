@@ -18,6 +18,7 @@ from api.cf_sync import router as cf_sync_router
 from database import init_db
 from ip_ranges import ip_range_checker
 from rate_limiter import rate_limiter
+from honeypot_ban import honeypot_ban
 from pathlib import Path
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
@@ -42,10 +43,12 @@ async def lifespan(app: FastAPI):
     await lists_manager.start_watcher(interval=5)
     ip_range_checker.load()
     await rate_limiter.connect()
+    await honeypot_ban.connect()
     logger.info("Server ready")
     yield
     lists_manager.stop_watcher()
     await rate_limiter.close()
+    await honeypot_ban.close()
     await ipinfo_client.close()
     await ipqs_client.close()
     logger.info("Server stopped")
@@ -76,6 +79,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             real_ip or (request.client.host if request.client else "0.0.0.0")
         )
 
+        if await honeypot_ban.is_banned(ip):
+            safe_url = config_store.offers.safeUrl
+            return RedirectResponse(url=safe_url, status_code=302)
+
         allowed, count = await rate_limiter.check(ip)
         if not allowed:
             safe_url = config_store.offers.safeUrl
@@ -95,6 +102,10 @@ app.include_router(dashboard_router)
 app.include_router(audit_router)
 app.include_router(collect_router)
 app.include_router(cf_sync_router)
+
+from api.honeypot import router as honeypot_router
+app.include_router(honeypot_router)
+
 app.include_router(gateway_router)
 
 from fastapi.responses import FileResponse
