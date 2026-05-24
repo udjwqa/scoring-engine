@@ -14,6 +14,7 @@ from api.gateway import router as gateway_router
 from api.dashboard_routes import router as dashboard_router
 from api.audit_routes import router as audit_router
 from api.collect_routes import router as collect_router
+from api.cf_sync import router as cf_sync_router
 from database import init_db
 from ip_ranges import ip_range_checker
 from pathlib import Path
@@ -64,6 +65,7 @@ app.include_router(lists_router)
 app.include_router(dashboard_router)
 app.include_router(audit_router)
 app.include_router(collect_router)
+app.include_router(cf_sync_router)
 app.include_router(gateway_router)
 
 from fastapi.responses import FileResponse
