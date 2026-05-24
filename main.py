@@ -19,6 +19,7 @@ from database import init_db
 from ip_ranges import ip_range_checker
 from rate_limiter import rate_limiter
 from honeypot_ban import honeypot_ban
+from external.play_integrity import play_integrity_client
 from pathlib import Path
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     ip_range_checker.load()
     await rate_limiter.connect()
     await honeypot_ban.connect()
+    play_integrity_client.init()
     logger.info("Server ready")
     yield
     lists_manager.stop_watcher()
@@ -105,6 +107,9 @@ app.include_router(dashboard_router)
 app.include_router(audit_router)
 app.include_router(collect_router)
 app.include_router(cf_sync_router)
+
+from api.integrity_routes import router as integrity_router
+app.include_router(integrity_router)
 
 from api.honeypot import router as honeypot_router
 app.include_router(honeypot_router)

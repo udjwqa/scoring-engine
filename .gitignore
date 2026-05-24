@@ -6,3 +6,4 @@ offers.json
 venv/
 *.db
 .DS_Store
+config/gcp-key.json
