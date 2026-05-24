@@ -1,4 +1,8 @@
+import os
+import secrets
+import hashlib
 import logging
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -12,6 +16,38 @@ logger = logging.getLogger("integrity")
 router = APIRouter()
 
 AUTOBAN_SCORE = 100
+NONCE_TTL = int(os.getenv("NONCE_TTL", "300"))
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+_redis = None
+
+
+async def get_redis():
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(REDIS_URL, decode_responses=True)
+    return _redis
+
+
+@router.get("/api/integrity/nonce")
+async def generate_nonce(request: Request):
+    forwarded = request.headers.get("x-forwarded-for", "")
+    real_ip = request.headers.get("x-real-ip", "")
+    ip = forwarded.split(",")[0].strip() if forwarded else (
+        real_ip or (request.client.host if request.client else "0.0.0.0")
+    )
+
+    raw = secrets.token_hex(32)
+    nonce = hashlib.sha256(raw.encode()).hexdigest()
+
+    try:
+        r = await get_redis()
+        await r.set(f"nonce:{nonce}", ip, ex=NONCE_TTL)
+        logger.info(f"Nonce generated for {ip}: {nonce[:16]}... (TTL={NONCE_TTL}s)")
+    except Exception as e:
+        logger.error(f"Redis nonce write failed: {e}")
+
+    return {"nonce": nonce, "ttl": NONCE_TTL}
 
 
 class IntegrityRequest(BaseModel):
@@ -27,6 +63,31 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
         real_ip or (request.client.host if request.client else "0.0.0.0")
     )
 
+    # === NONCE VALIDATION ===
+    if body.nonce:
+        try:
+            r = await get_redis()
+            nonce_ip = await r.get(f"nonce:{body.nonce}")
+
+            if nonce_ip is None:
+                logger.warning(f"[{ip}] Nonce unknown or expired: {body.nonce[:16]}...")
+                return JSONResponse({
+                    "verified": False,
+                    "error": "Invalid or expired nonce (possible replay attack)",
+                    "score": AUTOBAN_SCORE,
+                    "verdict": "white",
+                    "rejectionCode": "nonce_invalid",
+                }, status_code=403)
+
+            await r.delete(f"nonce:{body.nonce}")
+            logger.info(f"[{ip}] Nonce consumed: {body.nonce[:16]}...")
+
+        except Exception as e:
+            logger.error(f"Redis nonce check failed: {e}")
+    else:
+        logger.warning(f"[{ip}] No nonce provided in integrity verify request")
+
+    # === PLAY INTEGRITY ===
     if not play_integrity_client.available:
         return JSONResponse({
             "verified": False,
@@ -45,6 +106,20 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
             "verdict": "grey",
         })
 
+    # === NONCE MATCH CHECK ===
+    if body.nonce and verdict.nonce and verdict.nonce != body.nonce:
+        logger.warning(
+            f"[{ip}] Nonce mismatch: sent={body.nonce[:16]} token={verdict.nonce[:16]}"
+        )
+        return JSONResponse({
+            "verified": False,
+            "error": "Nonce mismatch (token tampered)",
+            "score": AUTOBAN_SCORE,
+            "verdict": "white",
+            "rejectionCode": "nonce_mismatch",
+        }, status_code=403)
+
+    # === SCORING ===
     cfg = config_store.engine
     details = []
     total = 0
@@ -114,15 +189,9 @@ async def verify_integrity(body: IntegrityRequest, request: Request):
             "app_recognition": verdict.app_recognition,
             "device_recognition": str(verdict.device_recognition),
             "app_licensing": verdict.app_licensing,
+            "nonce_verified": "true",
         },
-        js_metrics={
-            "playIntegrity": verdict.raw,
-        },
-    )
-
-    logger.info(
-        f"[{ip}] Integrity: score={total} verdict={final_verdict} "
-        f"device={verdict.device_recognition} app={verdict.app_recognition}"
+        js_metrics={"playIntegrity": verdict.raw},
     )
 
     return {
