@@ -26,11 +26,30 @@ class ScoringEngine:
         city: str = "",
         isp: str = "",
         ip: str = "",
+        asn: str = "",
     ) -> ScoringResult:
         cfg = config_store.engine
         details = []
         total = 0
         rejection_code = None
+
+        BLOCKED_ASNS = {
+            "15169", "16591", "396982",
+            "8075", "714",
+            "16509", "14618",
+            "13335",
+            "14061", "24940", "63949", "16276",
+            "136907", "32934", "36459", "20473",
+        }
+
+        if asn and asn in BLOCKED_ASNS:
+            pts = AUTOBAN_SCORE
+            total += pts
+            rejection_code = rejection_code or "asn_blocked"
+            details.append(ScoringDetail(
+                check="asn_block", points=pts,
+                reason=f"ASN {asn} в чёрном списке датацентров",
+            ))
 
         # === БЛОК 1: Статические заголовки ===
 

@@ -30,6 +30,7 @@ async def gateway(request: Request):
     city = headers.get("x-city", "")
     isp = headers.get("x-isp", "")
     os_version = headers.get("x-os-version", "")
+    cf_asn = headers.get("x-cf-asn", "")
 
     result = await scoring_engine.score_request(
         user_agent=user_agent,
@@ -42,6 +43,7 @@ async def gateway(request: Request):
         city=city,
         isp=isp,
         ip=ip,
+        asn=cf_asn,
     )
 
     await request_logger.log(
@@ -94,6 +96,7 @@ async def score_debug(request: Request):
         city=headers.get("x-city", ""),
         isp=headers.get("x-isp", ""),
         ip=ip,
+        asn=headers.get("x-cf-asn", ""),
     )
 
     await request_logger.log(

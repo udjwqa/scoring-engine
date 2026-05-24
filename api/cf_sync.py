@@ -54,6 +54,20 @@ async def sync_to_cloudflare():
         ok = await put_kv("BLOCKED_UA", ",".join(ua.items))
         results["user_agents"] = ok
 
+    # ASN blocklist
+    blocked_asns = "15169,16591,396982,8075,714,16509,14618,13335,14061,24940,63949,16276,136907,32934,36459,20473"
+    ok = await put_kv("BLOCKED_ASNS", blocked_asns)
+    results["asns"] = ok
+
+    # Desktop UA patterns
+    ok = await put_kv("DESKTOP_UA", "Windows NT,Macintosh,X11,Linux x86_64,CrOS")
+    results["desktop_ua"] = ok
+
+    # Client secret
+    ok = await put_kv("CLIENT_SECRET", os.getenv("CF_CLIENT_SECRET", ""))
+    results["client_secret"] = ok
+
+    # Offers
     offers = config_store.offers
     ok = await put_kv("SAFE_URL", offers.safeUrl)
     results["safe_url"] = ok
