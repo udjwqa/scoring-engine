@@ -17,9 +17,13 @@ from api.collect_routes import router as collect_router
 from api.cf_sync import router as cf_sync_router
 from database import init_db
 from ip_ranges import ip_range_checker
+from rate_limiter import rate_limiter
 from pathlib import Path
 from external.ipinfo_client import ipinfo_client
 from external.ipqs_client import ipqs_client
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import RedirectResponse, Response
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,9 +41,11 @@ async def lifespan(app: FastAPI):
     await lists_manager.load_all()
     await lists_manager.start_watcher(interval=5)
     ip_range_checker.load()
+    await rate_limiter.connect()
     logger.info("Server ready")
     yield
     lists_manager.stop_watcher()
+    await rate_limiter.close()
     await ipinfo_client.close()
     await ipqs_client.close()
     logger.info("Server stopped")
@@ -58,6 +64,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path.startswith("/api/health"):
+            return await call_next(request)
+
+        forwarded = request.headers.get("x-forwarded-for", "")
+        real_ip = request.headers.get("x-real-ip", "")
+        ip = forwarded.split(",")[0].strip() if forwarded else (
+            real_ip or (request.client.host if request.client else "0.0.0.0")
+        )
+
+        allowed, count = await rate_limiter.check(ip)
+        if not allowed:
+            safe_url = config_store.offers.safeUrl
+            logger.warning(f"Rate limit exceeded: {ip} ({count} req/min)")
+            return RedirectResponse(url=safe_url, status_code=302)
+
+        response = await call_next(request)
+        response.headers["X-RateLimit-Count"] = str(count)
+        return response
+
+app.add_middleware(RateLimitMiddleware)
 
 app.include_router(health_router)
 app.include_router(config_router)
