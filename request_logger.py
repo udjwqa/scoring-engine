@@ -38,7 +38,7 @@ class RequestLogger:
             "headers": headers or {},
             "scoringDetails": [d.model_dump() for d in result.details],
             "jsMetrics": js_metrics or {},
-            "playIntegrity": {},
+            "playIntegrity": (js_metrics or {}).get("playIntegrity", {}),
         }
 
         memory_entry = RequestLogEntry(
@@ -141,6 +141,17 @@ class RequestLogger:
             "tor_detected": "Tor обнаружен",
             "ipqs_high_fraud": "IPQS высокий fraud",
             "bot_detected": "Бот обнаружен",
+            "honeypot": "Honeypot ловушка",
+            "honeyfield_bot": "Honeyfield бот",
+            "integrity_invalid": "Play Integrity: недействительный",
+            "device_compromised": "Play Integrity: устройство скомпрометировано",
+            "app_tampered": "Play Integrity: приложение модифицировано",
+            "ip_range_blocked": "IP в диапазоне датацентров",
+            "asn_blocked": "ASN датацентра",
+            "static_device": "Статичное устройство",
+            "mouse_without_touch": "Мышь без тача",
+            "timezone_mismatch": "Несовпадение таймзоны",
+            "behavioral_score": "Поведенческий скоринг",
         }
         try:
             async with async_session() as session:
